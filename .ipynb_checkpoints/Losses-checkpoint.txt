@@ -1,0 +1,49 @@
+Final loss:1.6631710529327393
+Epochs: 30
+lr: 0.01
+sequence length: 100
+batch size: 32
+Hidden nodes: 256, hidden layers: 1
+
+
+
+---------------
+Final loss:1.8257466554641724
+Epochs: 30
+lr: 0.01
+sequence length: 25
+batch size: 32
+Hidden nodes: 128, hidden layers: 2
+
+
+
+---------------
+Final loss: 1.782852292060852
+Epochs: 30
+lr: 0.01
+sequence length: 100
+batch size: 32
+Hidden nodes: 128, hidden layers: 2
+
+
+
+---------------
+Final loss: 1.605808973312378
+Epochs: 100
+lr: 0.01
+sequence length: 100
+batch size: 32Hidden nodes: 128, hidden layers: 2
+
+
+
+---------------
+Final train loss: 1.4955511093139648
+Final validation loss: 1.417851209640503
+Epochs: 100
+lr: 0.01
+sequence length: 100
+batch size: 32Hidden nodes: 128, hidden layers: 2
+
+
+
+---------------
