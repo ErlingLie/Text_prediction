@@ -62,9 +62,10 @@ class Trainer:
                  seq_length: int,
                  epochs: int,
                  data,
+                 model: nn.Module,
                  outfile = "outfile",
-                 temp: int,
-                 model: nn.Module,):
+                 temp: float = 0.6,
+                 ):
         """
             Initialize our trainer class.
         """
@@ -84,13 +85,17 @@ class Trainer:
                             mode='min',factor=0.5, patience=2, verbose = True, threshold=1e-3)    
         
         
+        self.early_stop_count = 8
         self.temp = temp
+        
+        #Logging
         self.outfile = "output/" + outfile
+        self.checkpoint_dir = pathlib.Path("checkpoints")
         # Load our dataset
         self.data = data
         chars = list(set(self.data))
         self.data_size, self.vocab_size = len(self.data), len(chars)
-        print( 'data has %d characters, %d unique.' % (self.data_size, self.vocab_size))
+        print( 'Data has %d characters, %d unique.' % (self.data_size, self.vocab_size))
         self.char_to_ix = { ch:i for i,ch in enumerate(chars) }
         self.ix_to_char = { i:ch for i,ch in enumerate(chars) }
         
@@ -114,11 +119,11 @@ class Trainer:
         
         for j in range(seed_len):
             X[0,j,character[j]] = 1
-        
-        X = to_cuda(X)
-        out, hidden = self.model(X)
-        sf = nn.Softmax(dim=1)
-        prob = sf(out/self.temp)[-1].cpu()
+        with torch.no_grad():
+            X = to_cuda(X)
+            out, hidden = self.model(X)
+            sf = nn.Softmax(dim=1)
+            prob = sf(out/self.temp)[-1].cpu()
         
         prob /= sum(prob)
         # Taking the class with the highest probability score from the output
@@ -130,17 +135,30 @@ class Trainer:
 
     def sample(self, out_len, start):
         self.model.eval() # eval mode
-        #start = start.lower()
-        # First off, run through the starting characters
-        #chars = [self.ix_to_char[ch] for ch in start]
         size = out_len - len(start)
         # Now pass in the previous characters and get a new one
         for ii in range(size):
             char, h= self.predict(start)
             #chars.append(char)
             start.append(char)
-    
+        self.model.train()
         return ''.join([self.ix_to_char[ch] for ch in start])
+
+
+    def should_early_stop(self):
+            """
+                Checks if validation loss doesn't improve over early_stop_count epochs.
+            """
+            # Check if we have more than early_stop_count elements in our validation_loss list.
+            if len(self.VALIDATION_LOSS) < self.early_stop_count:
+                return False
+            # We only care about the last [early_stop_count] losses.
+            relevant_loss = list(self.VALIDATION_LOSS.values())[-self.early_stop_count:]
+            first_loss = relevant_loss[0]
+            if first_loss == min(relevant_loss):
+                print("Early stop criteria met")
+                return True
+            return False
 
     def train(self):
         """
@@ -149,12 +167,49 @@ class Trainer:
         # Track initial loss/accuracy
         def should_validate_model():
             return self.global_step % self.num_steps_per_val == 0
-
+        
+        def validation():
+            with torch.no_grad():
+                self.model.eval()
+                X = torch.zeros(128, self.seq_length,self.vocab_size)
+                Y = torch.zeros(128, self.seq_length, dtype = torch.long)
+                for i in range(64):
+                    inputs = self.data[i*self.seq_length:i*self.seq_length+self.seq_length]
+                    targets = self.data[i*self.seq_length + 1:i*self.seq_length+self.seq_length + 1]
+                    Y[i] = torch.Tensor(targets)
+                    for j in range(self.seq_length):
+                        X[i,j,inputs[j]] = 1
+                #Compute the cross entropy loss for the batch
+                X = to_cuda(X)
+                Y = to_cuda(Y)
+                output, hidden = self.model(X)
+                print(output.size())
+                val_loss = self.loss_criterion(output, Y.view(-1))
+                self.model.train()
+                self.VALIDATION_LOSS[self.global_step] = val_loss.detach().cpu()
+            print(f"Global step: {self.global_step}, Loss: {loss}, Val loss: {val_loss}")
+        
+        
+        def log_sample():
+            length = 300
+            if(self.global_step % 2000 == 0):
+                length = 2000
+                
+            with torch.no_grad():
+                seed = self.data[p:p+self.seq_length]
+                seed = self.sample(length,seed)
+                f = open(self.outfile, 'a')
+                f.write(f"\nStep: {self.global_step}, Loss: {self.TRAIN_LOSS[self.global_step]}\n\n")
+                f.write(seed)
+                f.write("\n"*4 + "-"*15)
+                f.close()
+                print(seed)
+            self.model.train()
+        
         for epoch in range(self.epochs):
             self.epoch = epoch
             # Perform a full pass through all the training samples
             p = 0
-            
             while(not p+self.seq_length*self.batch_size+1 >= len(self.data)):
                 
                 loss = 0
@@ -186,43 +241,40 @@ class Trainer:
                 
                 self.TRAIN_LOSS[self.global_step] = loss.detach().cpu()
                 
-                #if(self.global_step%300 == 0):
-                    #with torch.no_grad():
-                        #X = torch.zeros(len(self.data)//self.seq_length, self.seq_length,self.vocab_size)
-                        #Y = torch.zeros(len(self.data)//self.seq_length, self.seq_length, dtype = torch.long)
-                        #for i in range(len(self.data)//self.seq_length):
-                           # inputs = self.data[i*self.seq_length:i*self.seq_length+self.seq_length]
-                           # targets = self.data[i*self.seq_length + 1:i*self.seq_length+self.seq_length + 1]
-                           # Y[i] = torch.Tensor(targets)
-                          #  for j in range(self.seq_length):
-                         #       X[i,j,inputs[j]] = 1
-                        # Compute the cross entropy loss for the batch
-                        #X = to_cuda(X)
-                        #Y = to_cuda(Y)
-                        #output, hidden = self.model(X)
-                        #print(output.size())
-                        #val_loss = self.loss_criterion(output, Y.view(-1))
-                        #self.VALIDATION_LOSS[self.global_step] = val_loss.detach().cpu()
-                    #print(f"Global step: {self.global_step}, Loss: {loss}, Val loss: {val_loss}") 
-                    #self.scheduler.step(self.VALIDATION_LOSS[self.global_step])
-                if(self.global_step % 100 == 0): 
+                if(self.global_step%300 == 0):
+                    validation()
+                    self.save_model()
+                    self.scheduler.step(self.VALIDATION_LOSS[self.global_step])
+                elif(self.global_step % 100 == 0): 
                     print(f"Global step: {self.global_step}, Loss: {loss}")
+                    if(self.should_early_stop()):
+                        self.save_model()
+                        return
                     self.scheduler.step(self.TRAIN_LOSS[self.global_step])
                 if(self.global_step % 500 == 0):
-                    with torch.no_grad():
-                        seed = self.data[p:p+self.seq_length]
-                        seed = self.sample(600,seed)
-                        #print(output)
-                        f = open(self.outfile, 'a')
-                        f.write(f"\nStep: {self.global_step}, Loss: {self.TRAIN_LOSS[self.global_step]}\n\n")
-                        f.write(seed)
-                        f.write("\n"*4 + "-"*15)
-                        f.close()
-                        print(seed)
-                    self.model.train()
+                    log_sample()
                 p += self.seq_length
                 self.global_step += 1
+                
+    def save_model(self):
+        def is_best_model():
+            """
+                Returns True if current model has the lowest validation loss
+            """
+            validation_losses = list(self.VALIDATION_LOSS.values())
+            return validation_losses[-1] == min(validation_losses)
 
+        state_dict = self.model.state_dict()
+        filepath = self.checkpoint_dir.joinpath(f"{self.global_step}.ckpt")
+        utils.save_checkpoint(state_dict, filepath, is_best_model())
+        
+    def load_best_model(self):
+        state_dict = utils.load_best_checkpoint(self.checkpoint_dir)
+        if state_dict is None:
+            print(
+                f"Could not load best checkpoint. Did not find under: {self.checkpoint_dir}")
+            return
+        self.model.load_state_dict(state_dict)
 
 
 def create_plots(trainer: Trainer, name: str):
@@ -239,21 +291,29 @@ def create_plots(trainer: Trainer, name: str):
 
 
 if __name__ == "__main__":
-    data = open("alice_in_wonderland.txt", 'r').read().lower()# should be simple plain text file
+    fName = "input/Kanye.txt"
+    data = open(fName, 'r').read().lower()# should be simple plain text file
     chars = list(set(data))
     data_size, vocab_size = len(data), len(chars)
     epochs = 100
     learning_rate = 1e-2
-    seq_length = 25
+    seq_length = 50
     batch_size = 32
-    model = MyModel(vocab_size,256, 2)
+    model = MyModel(vocab_size,128, 2)
     trainer = Trainer(
         learning_rate,
         batch_size,
         seq_length,
         epochs,
         data,
-        model
+        model,
+        "Kanye19_03",
+        0.6,
     )
+    trainer.load_best_model()
+    
     trainer.train()
+    seed = [trainer.char_to_ix[ch] for ch in "[verse 1]"]
+    trainer.sample(2000, seed)
+    print("".join([trainer.ix_to_char[i] for i in seed]))
     create_plots(trainer, "task2")
