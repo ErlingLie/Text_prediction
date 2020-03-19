@@ -62,7 +62,7 @@ class Trainer:
                  seq_length: int,
                  epochs: int,
                  data,
-                 outfile,
+                 outfile = "outfile",
                  temp: int,
                  model: nn.Module,):
         """
@@ -85,7 +85,7 @@ class Trainer:
         
         
         self.temp = temp
-        self.outfile = outfile
+        self.outfile = "output/" + outfile
         # Load our dataset
         self.data = data
         chars = list(set(self.data))
